@@ -4,19 +4,18 @@ namespace uRPC.Core.Messages;
 
 public struct RawMessage
 {
+    private static readonly byte[] Token = [0xAA, 0xBB];
+    private static readonly byte[] TokenReader = new byte[2];
+
     public required uint Id;
     public required uint Type;
     public required uint Status;
     public required Memory<byte>[] Payload;
 
-    public const int HeaderSize = sizeof(uint) + sizeof(uint) + sizeof(uint);
-
-    public readonly int PayloadSize => Payload.Aggregate(0, static (s, p) => s + p.Length);
-
-    public readonly int FullSize => Payload.Aggregate(HeaderSize, static (s, p) => s + p.Length);
-
     public readonly async Task WriteBytesAsync(Stream stream, CancellationToken cancellationToken)
     {
+        // We use a token to quickly realize it when a bad data block was sent
+        await stream.WriteAsync(Token, cancellationToken);
 
         await stream.WriteAsync(BitConverter.GetBytes(Id), cancellationToken);
         await stream.WriteAsync(BitConverter.GetBytes(Type), cancellationToken);
@@ -28,6 +27,7 @@ public struct RawMessage
         for (int i = 0; i < Payload.Length; i++)
         {
             var block = Payload[i];
+            // Write data block length
             await stream.WriteAsync(BitConverter.GetBytes((uint)block.Length), cancellationToken);
             await stream.WriteAsync(block, cancellationToken);
         }
@@ -35,6 +35,10 @@ public struct RawMessage
 
     public static async Task<RawMessage> ReadNewMessageAsync(Stream stream, CancellationToken cancellationToken)
     {
+        // We use a token to quickly realize it when a bad data block was sent
+        await stream.ReadExactlyAsync(TokenReader, cancellationToken);
+        ValidateToken();
+
         var buffer = new byte[sizeof(uint)];
         var uintMem = buffer.AsMemory();
 
@@ -70,6 +74,15 @@ public struct RawMessage
             Status = status,
             Payload = payload
         };
+    }
+
+    private static void ValidateToken()
+    {
+        for (int i = 0; i < Token.Length; i++)
+        {
+            if (Token[i] != TokenReader[i])
+                throw new Exception("Invalid token");
+        }
     }
 
     public override readonly bool Equals(object? obj)

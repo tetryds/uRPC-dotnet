@@ -10,17 +10,20 @@ using System.Collections.Concurrent;
 
 namespace uRPC.Client;
 
-public class AppClient(string hostname, int port)
+public class AppClient : IMessageHandler
 {
-    readonly SafeFlag listening = new();
-
     private uint sentCount = 0;
 
-    readonly ClientConnection client = new ClientConnection(new TcpClient(hostname, port));
+    readonly ClientConnection client;
 
     readonly ConcurrentDictionary<uint, Action<RawMessage>> responseMap = [];
 
-    public async Task<ResponseHandler<TResponse>> SendAsync<TRequest, TResponse>(TRequest message, Action<TResponse>? onReceive = null, CancellationToken cancellationToken = default)
+    public AppClient(string hostname, int port)
+    {
+        client = new ClientConnection(new TcpClient(hostname, port), this);
+    }
+
+    public async Task<ResponseHandler<TRequest, TResponse>> SendAsync<TRequest, TResponse>(TRequest message, Action<TResponse>? onReceive = null, CancellationToken cancellationToken = default)
         where TRequest : IMessage<TRequest>
         where TResponse : IMessage<TResponse>
     {
@@ -34,7 +37,7 @@ public class AppClient(string hostname, int port)
             Payload = message.Serialize()
         };
 
-        var handler = new ResponseHandler<TResponse>(onReceive);
+        var handler = new ResponseHandler<TRequest, TResponse>(message, onReceive);
         _ = handler.Wait.ContinueWith(_ => responseMap.TryRemove(id, out var _));
 
         if (!responseMap.TryAdd(id, handler.AddResponse))
@@ -45,24 +48,16 @@ public class AppClient(string hostname, int port)
         return handler;
     }
 
-    public async void Start(CancellationToken cancellationToken)
+    public AppClient Start(CancellationToken cancellationToken)
     {
-        // Can only start once
-        if (!listening.Set()) return;
+        client.Start(cancellationToken);
+        return this;
+    }
 
-        var receiveChannel = Channel.CreateUnbounded<(ClientConnection, RawMessage)>();
-
-        var writer = new Writer(receiveChannel.Writer);
-        var reader = new Reader(receiveChannel.Reader);
-
-        client.Start(writer, cancellationToken);
-
-        while (true)
-        {
-            (_, var msg) = await reader.ReadAsync(cancellationToken);
-
-            if (responseMap.TryGetValue(msg.Id, out var handleResponse))
-                handleResponse(msg);
-        }
+    public Task HandleMessageAsync(ClientConnection conn, RawMessage message, CancellationToken ct)
+    {
+        if (responseMap.TryGetValue(message.Id, out var handleResponse))
+            handleResponse(message);
+        return Task.CompletedTask;
     }
 }

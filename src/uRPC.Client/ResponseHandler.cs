@@ -2,15 +2,16 @@
 
 namespace uRPC.Client;
 
-public class ResponseHandler<T>(Action<T>? onReceive) where T : IMessage<T>
+public class ResponseHandler<TRequest, TResponse>(TRequest sent, Action<TResponse>? onReceive) where TResponse : IMessage<TResponse>
 {
-    private readonly List<T> received = [];
+    private readonly List<TResponse> received = [];
 
-    public IReadOnlyList<T> Received => received;
+    public TRequest Sent => sent;
+    public IReadOnlyList<TResponse> Received => received;
 
-    private readonly TaskCompletionSource<T> complete = new();
+    private readonly TaskCompletionSource<TResponse> complete = new();
 
-    public Task<T> Last => complete.Task;
+    public Task<TResponse> Last => complete.Task;
 
     public Task Wait => complete.Task;
 
@@ -18,14 +19,14 @@ public class ResponseHandler<T>(Action<T>? onReceive) where T : IMessage<T>
 
     internal void AddResponse(RawMessage message)
     {
-        if (message.Type != T.Type)
+        if (message.Type != TResponse.Type)
             complete.SetException(new ResponseException("Received incorrect message type"));
 
         if (Wait.IsCompleted) return;
 
         try
         {
-            var msg = T.Deserialize(message.Payload);
+            var msg = TResponse.Deserialize(message.Payload);
             received.Add(msg);
             onReceive?.Invoke(msg);
 

@@ -46,6 +46,19 @@ public readonly struct EchoMessage(int replyCount, Memory<byte> data) : IMessage
     {
         return HashCode.Combine(Data);
     }
+
+    public static EchoMessage GetRandom(int replyCount, int dataLength)
+    {
+        byte[] data = new byte[dataLength];
+
+        for (int i = 0; i < data.Length; i++)
+        {
+            data[i] = (byte)Random.Shared.Next();
+        }
+
+        return new EchoMessage(replyCount, data);
+    }
+
     public static bool operator ==(EchoMessage left, EchoMessage right)
     {
         return left.Equals(right);
